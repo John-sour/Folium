@@ -25,8 +25,17 @@ jobs:
           for pkg in boost vulkan-headers spirv-headers vulkan-memory-allocator robin-map glslang fmt; do
             brew install "$pkg" || echo "Could not install $pkg, continuing"
           done
-          ls "$(brew --prefix)/include/boost/fusion/include/adapt_struct.hpp"
-          ls "$(brew --prefix)/include/vulkan/vulkan.hpp"
+          PREFIX="$(brew --prefix)"
+          ls "$PREFIX/include/boost/fusion/include/adapt_struct.hpp"
+          ls "$PREFIX/include/vulkan/vulkan.hpp"
+          VMA="$(find "$PREFIX/include" "$PREFIX/Cellar/vulkan-memory-allocator" -name vk_mem_alloc.h 2>/dev/null | head -1 || true)"
+          if [ -z "$VMA" ]; then
+            mkdir -p "$PWD/extra-include"
+            curl -fsSL -o "$PWD/extra-include/vk_mem_alloc.h" https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/master/include/vk_mem_alloc.h
+            VMA="$PWD/extra-include/vk_mem_alloc.h"
+          fi
+          echo "Using VMA header at: $VMA"
+          echo "VMA_DIR=$(dirname "$VMA")" >> "$GITHUB_ENV"
 
       - name: Build Xcode Archive
         run: |
@@ -41,7 +50,7 @@ jobs:
               -destination 'generic/platform=iOS' \
               -skipMacroValidation \
               -skipPackagePluginValidation \
-              HEADER_SEARCH_PATHS='$(inherited) '"$BREW_INCLUDE" \
+              HEADER_SEARCH_PATHS='$(inherited) '"$BREW_INCLUDE $VMA_DIR" \
               GCC_TREAT_WARNINGS_AS_ERRORS=NO \
               SWIFT_TREAT_WARNINGS_AS_ERRORS=NO \
               CODE_SIGNING_ALLOWED=NO \
@@ -63,6 +72,7 @@ jobs:
         if: failure()
         run: |
           grep -E "error:|ld: |Undefined symbols" build.log \
+            | grep -vE "^[[:space:]]*[0-9]+ \|" \
             | sed -E 's#^.*/([^/]+:[0-9]+:[0-9]+: )#\1#' \
             | sort -u | head -60
 
