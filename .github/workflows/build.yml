@@ -6,6 +6,7 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    timeout-minutes: 180
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -17,14 +18,19 @@ jobs:
         with:
           xcode-version: 'latest'
 
-      - name: Install Boost
+      - name: Install build dependencies
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
         run: |
-          brew install boost
-          echo "Boost prefix: $(brew --prefix boost)"
+          for pkg in boost vulkan-headers spirv-headers vulkan-memory-allocator robin-map glslang fmt; do
+            brew install "$pkg" || echo "Could not install $pkg, continuing"
+          done
           ls "$(brew --prefix)/include/boost/fusion/include/adapt_struct.hpp"
+          ls "$(brew --prefix)/include/vulkan/vulkan.hpp"
 
       - name: Build Xcode Archive
         run: |
+          defaults write com.apple.dt.Xcode IDEBuildingContinueBuildingAfterErrors -bool YES
           BREW_INCLUDE="$(brew --prefix)/include"
           build() {
             xcodebuild archive \
@@ -53,9 +59,20 @@ jobs:
             fi
           fi
 
-      - name: Show build errors
+      - name: Show all build errors
         if: failure()
-        run: grep -n "error:" build.log | head -30
+        run: |
+          grep -E "error:|ld: |Undefined symbols" build.log \
+            | sed -E 's#^.*/([^/]+:[0-9]+:[0-9]+: )#\1#' \
+            | sort -u | head -60
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
 
       - name: Package IPA
         run: |
